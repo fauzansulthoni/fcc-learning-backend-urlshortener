@@ -5,7 +5,10 @@ const app = express();
 // Accessing mongoose
 const mongoose = require("mongoose");
 // Accessing dns module;
-const dns = require("dns");
+// const dns = require("dns");
+const dns = require('dns');
+const { promisify } = require('util');
+const lookup = promisify(dns.lookup);
 
 // mongodb-connection
 mongoose.connect(process.env.MONGODB_URI, { dbName: "fcc_urlshorteners" });
@@ -27,7 +30,7 @@ app.get("/", function (req, res) {
 // Schema
 const urlShortenerSchema = new mongoose.Schema({
   url: { type: String, rquired: true },
-  short_url: String,
+  short_url: Number,
 });
 
 const UrlShortener = mongoose.model("UrlShortener", urlShortenerSchema);
@@ -47,43 +50,87 @@ app.get("/api/shorturl/:shorturl", async function (req, res) {
   }
 });
 
-app.post("/api/shorturl", async function (req, res) {
-  const url = req.body.url;
-  const options = {
-    all: true,
-  };
+// app.post("/api/shorturl", async function (req, res) {
+//   const url = req.body.url;
+//   const options = {
+//     all: true,
+//   };
 
-  const cleanUrl = url.match(/^(https?:\/\/[^\/\s]+)/)[1];
-  const domain = url.match(/^(https?:\/\/)?([^\/\s]+)/)[2];
-  dns.lookup(domain, options, (error, addresses) => {
-    if (error) return res.json({ error: "Invalid url!", error });
-    console.log("dns_status: The website is on the list");
-  });
+  
+//   const domain = url.match(/^(https?:\/\/)?([^\/\s]+)/)[2];
+//   dns.lookup(domain, options, (error, addresses) => {
+//     if (error) return res.json({ error: "invalid url", error });
+//     console.log("dns_status: The website is on the list");
+//   });
+
+//   try {
+//     // Check if the data is exist on the database
+//     const existingRecord = await UrlShortener.findOne({ url: url });
+//     if (existingRecord) {
+//       return res.json({
+//         original_url: existingRecord.url,
+//         short_url: existingRecord.short_url,
+//       });
+
+//     }
+//     const cleanUrl = url.match(/^(https?:\/\/[^\/\s]+)/)[1];
+//     // Add new url shortener
+//     const newRecord = await UrlShortener({
+//       url: cleanUrl,
+//       short_url: Number(Date.now().toString().slice(-5)),
+//     });
+//     newRecord.save().then((data) => {
+//       console.log("Success adding the new data!");
+//       res.json({
+//         original_url: data.url,
+//         short_url: data.short_url,
+//       });
+
+//     });
+//   } catch (error) {
+//     console.log("error: Error when adding data:", error);
+//   }
+// });
+
+app.post('/api/shorturl', async (req, res) => {
+  const { url } = req.body;
 
   try {
-    // Check if the data is exist on the database
-    const existingRecord = await UrlShortener.findOne({ url: url });
-    if (existingRecord) {
-      res.json({
-        original_url: existingRecord.url,
-        short_url: existingRecord.short_url,
-      });
-      return;
+    // 1. Validate protocol
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      return res.json({ error: 'invalid url' });
     }
-    // Add new url shortener
-    const newRecord = await UrlShortener({
-      url: cleanUrl,
-      short_url: Number(Date.now().toString().slice(-5)),
-    });
-    newRecord.save().then((data) => {
-      console.log("Success adding the new data!");
-      res.json({
-        original_url: data.url,
-        short_url: data.short_url,
+
+    // 2. DNS lookup
+    const domain = parsedUrl.hostname;
+    await lookup(domain);
+
+    // 3. Check DB
+    const existing = await UrlShortener.findOne({ url });
+    if (existing) {
+      return res.json({
+        original_url: existing.url,
+        short_url: existing.short_url,
       });
+    }
+
+    // 4. Save new record
+    const shortCode = Number(Date.now().toString().slice(-5));
+    const newRecord = new UrlShortener({
+      url: parsedUrl.href,
+      short_url: shortCode,
     });
-  } catch (error) {
-    console.log("error: Error when adding data:", error);
+
+    const saved = await newRecord.save();
+    return res.json({
+      original_url: saved.url,
+      short_url: saved.short_url,
+    });
+
+  } catch (err) {
+    console.error("Error:", err.message);
+    return res.json({ error: 'invalid url' });
   }
 });
 
